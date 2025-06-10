@@ -1,0 +1,15 @@
+{
+  "name": "chat-mode-creator-mcp",
+  "version": "1.0.0",
+  "description": "MCP server for creating custom VS Code chat modes for specialized development workflows",
+  "main": "mcp_chatmode_server.py",
+  "scripts": {
+    "start": "python mcp_chatmode_server.py"
+  },
+  "dependencies": {
+    "mcp": ">=1.0.0"
+  },
+  "keywords": ["mcp", "vscode", "chat-modes", "development", "azure", "bicep", "lambda", "spec-driven"],
+  "author": "Your Name",
+  "license": "MIT"
+}
