@@ -60,6 +60,46 @@ def extract_description_from_frontmatter(content: str) -> str:
     
     return "Custom chat mode for specialized development workflow"
 
+def find_matching_chat_mode(user_query: str) -> Optional[str]:
+    """Find a chat mode that matches the user's query/description."""
+    query_lower = user_query.lower()
+    
+    # Load available chat modes
+    chat_modes = load_chat_modes()
+    
+    # Define keywords for each chat mode
+    mode_keywords = {
+        'lambda_to_functions_migration': [
+            'lambda', 'aws lambda', 'migrate lambda', 'azure functions', 
+            'lambda to functions', 'lambda migration', 'aws to azure',
+            'migrate aws', 'serverless migration'
+        ],
+        'azure_bicep_development': [
+            'bicep', 'azure bicep', 'infrastructure', 'iac', 'infrastructure as code',
+            'azure infrastructure', 'azure resources', 'arm template', 'bicep template'
+        ],
+        'spec_driven_development': [
+            'specification', 'spec driven', 'requirements', 'prd', 'product requirements',
+            'specification first', 'spec to code', 'requirements to code'
+        ]
+    }
+    
+    # Score each mode based on keyword matches
+    mode_scores = {}
+    for mode_key, keywords in mode_keywords.items():
+        if mode_key in chat_modes:
+            score = 0
+            for keyword in keywords:
+                if keyword in query_lower:
+                    score += 1
+            mode_scores[mode_key] = score
+    
+    # Return the mode with the highest score, if any matches found
+    if mode_scores and max(mode_scores.values()) > 0:
+        return max(mode_scores, key=mode_scores.get)
+    
+    return None
+
 def get_available_chat_modes() -> List[str]:
     """Get list of available chat mode keys."""
     return list(load_chat_modes().keys())
@@ -70,6 +110,25 @@ async def handle_list_tools() -> List[types.Tool]:
     available_modes = get_available_chat_modes()
     
     return [
+        types.Tool(
+            name="suggest_chat_mode",
+            description="Analyze user query and suggest the most appropriate chat mode for their development workflow",
+            inputSchema={
+                "type": "object",
+                "properties": {
+                    "user_query": {
+                        "type": "string",
+                        "description": "The user's question or description of what they want to accomplish"
+                    },
+                    "workspace_path": {
+                        "type": "string",
+                        "description": "Path to the workspace where the chat mode should be created",
+                        "default": "."
+                    }
+                },
+                "required": ["user_query"]
+            }
+        ),
         types.Tool(
             name="create_chat_mode",
             description="Create a custom VS Code chat mode file for specialized development workflows",
@@ -101,7 +160,64 @@ async def handle_list_tools() -> List[types.Tool]:
 async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.TextContent]:
     """Handle tool calls from the MCP client."""
     
-    if name == "create_chat_mode":
+    if name == "suggest_chat_mode":
+        user_query = arguments.get("user_query", "")
+        workspace_path = arguments.get("workspace_path", ".")
+        
+        if not user_query:
+            return [types.TextContent(
+                type="text",
+                text="❌ Error: user_query is required to suggest an appropriate chat mode."
+            )]
+        
+        try:
+            # Find matching chat mode
+            suggested_mode = find_matching_chat_mode(user_query)
+            chat_modes = load_chat_modes()
+            
+            if suggested_mode and suggested_mode in chat_modes:
+                mode_info = chat_modes[suggested_mode]
+                mode_description = mode_info["description"]
+                
+                return [types.TextContent(
+                    type="text",
+                    text=f"🎯 **Perfect Match Found!**\n\n"
+                         f"Based on your query: *\"{user_query}\"*\n\n"
+                         f"I recommend the **{suggested_mode.replace('_', ' ').title()}** chat mode:\n\n"
+                         f"📋 **Description**: {mode_description}\n\n"
+                         f"🚀 **Ready to create this chat mode?**\n"
+                         f"Use the `create_chat_mode` tool with:\n"
+                         f"```json\n"
+                         f"{{\n"
+                         f"  \"mode_type\": \"{suggested_mode}\",\n"
+                         f"  \"workspace_path\": \"{workspace_path}\"\n"
+                         f"}}\n"
+                         f"```\n\n"
+                         f"This will create the specialized chat mode file in your VS Code workspace!"
+                )]
+            else:
+                # No exact match found, show all available options
+                all_modes = list(chat_modes.keys())
+                mode_list = "\n".join([
+                    f"- **{mode.replace('_', ' ').title()}**: {chat_modes[mode]['description']}"
+                    for mode in all_modes
+                ])
+                
+                return [types.TextContent(
+                    type="text",
+                    text=f"🤔 **No exact match found** for: *\"{user_query}\"*\n\n"
+                         f"Here are the available chat modes:\n\n{mode_list}\n\n"
+                         f"💡 **Tip**: You can still create any of these modes using the `create_chat_mode` tool!\n\n"
+                         f"Which one seems most relevant to your needs?"
+                )]
+                
+        except Exception as e:
+            return [types.TextContent(
+                type="text",
+                text=f"❌ Error analyzing query: {str(e)}"
+            )]
+    
+    elif name == "create_chat_mode":
         mode_type = arguments.get("mode_type")
         output_path = arguments.get("output_path", "")
         workspace_path = arguments.get("workspace_path", ".")
@@ -175,9 +291,10 @@ async def main():
             InitializationOptions(
                 server_name="chat-mode-creator",
                 server_version="1.0.0",
-                capabilities=server.get_capabilities(
-                    notification_options=None,
-                    experimental_capabilities={}
+                capabilities=types.ServerCapabilities(
+                    tools=types.ToolsCapability(
+                        listChanged=False
+                    )
                 )
             )
         )
