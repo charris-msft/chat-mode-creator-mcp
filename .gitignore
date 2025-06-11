@@ -1,5 +1,7 @@
 # custom
-.github
+# specifically excluding chatmodes and prompts
+.github/chatmodes
+.github/prompts
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
