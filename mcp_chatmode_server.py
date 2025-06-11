@@ -18,15 +18,54 @@ MODES_DIR = "chat_modes"
 os.makedirs(MODES_DIR, exist_ok=True)
 
 def load_chat_modes() -> Dict[str, Dict[str, str]]:
-    """Load all available chat modes from the chat_modes directory."""
+    """Load all available chat modes from the chat_modes directory and subdirectories."""
     chat_modes = {}
     
     if not os.path.exists(MODES_DIR):
         return chat_modes
     
-    for filename in os.listdir(MODES_DIR):
-        if filename.endswith('.chatmode.md'):
-            file_path = os.path.join(MODES_DIR, filename)
+    # Check both root directory and subdirectories
+    for root, dirs, files in os.walk(MODES_DIR):
+        for filename in files:
+            if filename.endswith('.chatmode.md'):
+                file_path = os.path.join(root, filename)
+                try:
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
+                    
+                    # Extract description from frontmatter
+                    description = extract_description_from_frontmatter(content)
+                    
+                    # Create mode key from filename (remove .chatmode.md and convert to snake_case)
+                    mode_key = filename.replace('.chatmode.md', '').replace('-', '_')
+                    
+                    # Get relative path for subfolder info
+                    rel_path = os.path.relpath(file_path, MODES_DIR)
+                    subfolder = os.path.dirname(rel_path) if os.path.dirname(rel_path) != '.' else None
+                    
+                    chat_modes[mode_key] = {
+                        'filename': filename,
+                        'content': content,
+                        'description': description,
+                        'subfolder': subfolder,
+                        'full_path': file_path
+                    }
+                except Exception as e:
+                    print(f"Warning: Could not load chat mode file {filename}: {e}")
+    
+    return chat_modes
+
+def load_custom_prompts(mode_name: str) -> Dict[str, Dict[str, str]]:
+    """Load custom prompts for a specific mode from its subfolder."""
+    prompts = {}
+    mode_folder = os.path.join(MODES_DIR, mode_name.replace('_', '-'))
+    
+    if not os.path.exists(mode_folder):
+        return prompts
+    
+    for filename in os.listdir(mode_folder):
+        if filename.endswith('.prompt.md'):
+            file_path = os.path.join(mode_folder, filename)
             try:
                 with open(file_path, 'r', encoding='utf-8') as f:
                     content = f.read()
@@ -34,21 +73,22 @@ def load_chat_modes() -> Dict[str, Dict[str, str]]:
                 # Extract description from frontmatter
                 description = extract_description_from_frontmatter(content)
                 
-                # Create mode key from filename (remove .chatmode.md and convert to snake_case)
-                mode_key = filename.replace('.chatmode.md', '').replace('-', '_')
+                # Create prompt key from filename (remove .prompt.md and convert to snake_case)
+                prompt_key = filename.replace('.prompt.md', '').replace('-', '_')
                 
-                chat_modes[mode_key] = {
+                prompts[prompt_key] = {
                     'filename': filename,
                     'content': content,
-                    'description': description
+                    'description': description,
+                    'full_path': file_path
                 }
             except Exception as e:
-                print(f"Warning: Could not load chat mode file {filename}: {e}")
+                print(f"Warning: Could not load custom prompt file {filename}: {e}")
     
-    return chat_modes
+    return prompts
 
 def extract_description_from_frontmatter(content: str) -> str:
-    """Extract description from YAML frontmatter in chat mode file."""
+    """Extract description from YAML frontmatter in files."""
     # Look for YAML frontmatter between --- markers
     frontmatter_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, re.DOTALL)
     if frontmatter_match:
@@ -58,7 +98,7 @@ def extract_description_from_frontmatter(content: str) -> str:
         if desc_match:
             return desc_match.group(1).strip()
     
-    return "Custom chat mode for specialized development workflow"
+    return "Custom file for specialized development workflow"
 
 def find_matching_chat_mode(user_query: str) -> Optional[str]:
     """Find a chat mode that matches the user's query/description."""
@@ -100,6 +140,26 @@ def find_matching_chat_mode(user_query: str) -> Optional[str]:
     
     return None
 
+def create_mode_subfolder_structure(mode_name: str, workspace_path: str = ".") -> tuple[str, str]:
+    """Create the folder structure for a mode and return the paths."""
+    # Create .github structure following VS Code documentation
+    # Chat modes: place directly in .github/chatmodes/
+    # Prompt files: place directly in .github/prompts/ according to VS Code docs
+    chatmode_folder = os.path.join(workspace_path, ".github", "chatmodes")
+    prompts_folder = os.path.join(workspace_path, ".github", "prompts")
+    
+    os.makedirs(chatmode_folder, exist_ok=True)
+    os.makedirs(prompts_folder, exist_ok=True)
+    
+    return chatmode_folder, prompts_folder
+
+# Define available prompt templates for each mode
+AVAILABLE_PROMPT_TEMPLATES = {
+    'lambda_to_functions_migration': ['evaluate', 'validate'],
+    'azure_bicep_development': ['review', 'deploy'],
+    'spec_driven_development': ['validate_spec', 'generate_tests']
+}
+
 def get_available_chat_modes() -> List[str]:
     """Get list of available chat mode keys."""
     return list(load_chat_modes().keys())
@@ -131,7 +191,7 @@ async def handle_list_tools() -> List[types.Tool]:
         ),
         types.Tool(
             name="create_chat_mode",
-            description="Create a custom VS Code chat mode file for specialized development workflows",
+            description="Create a complete VS Code chat mode package with specialized prompts for development workflows",
             inputSchema={
                 "type": "object",
                 "properties": {
@@ -179,13 +239,24 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.T
                 mode_info = chat_modes[suggested_mode]
                 mode_description = mode_info["description"]
                 
+                # Check if custom prompts exist for this mode
+                custom_prompts = load_custom_prompts(suggested_mode)
+                prompt_info = ""
+                if custom_prompts:
+                    prompt_list = list(custom_prompts.keys())
+                    prompt_info = f"\n\n🎯 **Included Custom Prompts**: {', '.join(prompt_list)}"
+                elif suggested_mode in AVAILABLE_PROMPT_TEMPLATES:
+                    template_prompts = AVAILABLE_PROMPT_TEMPLATES[suggested_mode]
+                    prompt_info = f"\n\n🎯 **Included Custom Prompts**: {', '.join(template_prompts)}"
+                
                 return [types.TextContent(
                     type="text",
                     text=f"🎯 **Perfect Match Found!**\n\n"
                          f"Based on your query: *\"{user_query}\"*\n\n"
                          f"I recommend the **{suggested_mode.replace('_', ' ').title()}** chat mode:\n\n"
-                         f"📋 **Description**: {mode_description}\n\n"
-                         f"🚀 **Ready to create this chat mode?**\n"
+                         f"📋 **Description**: {mode_description}\n"
+                         f"{prompt_info}\n\n"
+                         f"🚀 **Ready to create this complete chat mode package?**\n"
                          f"Use the `create_chat_mode` tool with:\n"
                          f"```json\n"
                          f"{{\n"
@@ -193,21 +264,24 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.T
                          f"  \"workspace_path\": \"{workspace_path}\"\n"
                          f"}}\n"
                          f"```\n\n"
-                         f"This will create the specialized chat mode file in your VS Code workspace!"
+                         f"This will create the chat mode AND all specialized prompts in your VS Code workspace!"
                 )]
             else:
                 # No exact match found, show all available options
                 all_modes = list(chat_modes.keys())
-                mode_list = "\n".join([
-                    f"- **{mode.replace('_', ' ').title()}**: {chat_modes[mode]['description']}"
-                    for mode in all_modes
-                ])
+                mode_list = []
+                for mode in all_modes:
+                    mode_desc = chat_modes[mode]['description']
+                    prompts = []
+                    if mode in AVAILABLE_PROMPT_TEMPLATES:
+                        prompts = AVAILABLE_PROMPT_TEMPLATES[mode]
+                    mode_list.append(f"- **{mode.replace('_', ' ').title()}**: {mode_desc}\n  *Includes prompts*: {', '.join(prompts) if prompts else 'None'}")
                 
                 return [types.TextContent(
                     type="text",
                     text=f"🤔 **No exact match found** for: *\"{user_query}\"*\n\n"
-                         f"Here are the available chat modes:\n\n{mode_list}\n\n"
-                         f"💡 **Tip**: You can still create any of these modes using the `create_chat_mode` tool!\n\n"
+                         f"Here are the available chat mode packages:\n\n{chr(10).join(mode_list)}\n\n"
+                         f"💡 **Each mode is a complete package** that includes specialized custom prompts!\n\n"
                          f"Which one seems most relevant to your needs?"
                 )]
                 
@@ -239,42 +313,76 @@ async def handle_call_tool(name: str, arguments: Dict[str, Any]) -> List[types.T
             content = template["content"]
             description = template["description"]
             
-            # Determine output directory
-            if output_path:
-                # Use custom path
-                output_dir = os.path.join(workspace_path, output_path)
-            else:
-                # Use default VS Code chat modes directory
-                output_dir = os.path.join(workspace_path, ".github", "chatmodes")
+            # Always create subfolder structure with prompts (package deal)
+            # Following VS Code documentation: prompts go in .github/prompts/
+            chatmode_folder, prompts_folder = create_mode_subfolder_structure(mode_type, workspace_path)
             
-            # Ensure directory exists
-            os.makedirs(output_dir, exist_ok=True)
+            # Chat mode goes in chatmodes folder
+            chatmode_dir = chatmode_folder
+            # Prompt files go in prompts folder (VS Code standard)
+            prompts_dir = prompts_folder
             
-            # Full file path
-            file_path = os.path.join(output_dir, filename)
+            # Full file path for chat mode
+            file_path = os.path.join(chatmode_dir, filename)
             
             # Write the chat mode file
             with open(file_path, 'w', encoding='utf-8') as f:
                 f.write(content)
             
+            result_text = f"✅ **Complete Chat Mode Package Created!**\n\n"
+            result_text += f"📋 **Mode**: {mode_type.replace('_', ' ').title()}\n"
+            result_text += f"📁 **Chat Mode**: {file_path}\n"
+            
+            # Always create custom prompts (package deal) in the correct prompts folder
+            created_prompts = []
+            if mode_type in AVAILABLE_PROMPT_TEMPLATES:
+                available_prompts = AVAILABLE_PROMPT_TEMPLATES[mode_type]
+                
+                for prompt_name in available_prompts:
+                    prompt_filename = f"{prompt_name}.prompt.md"
+                    prompt_file_path = os.path.join(prompts_dir, prompt_filename)
+                    
+                    # Check if prompt file already exists in the source directory
+                    source_prompt_path = os.path.join(MODES_DIR, mode_type.replace('_', '-'), prompt_filename)
+                    if os.path.exists(source_prompt_path):
+                        # Copy existing prompt file
+                        with open(source_prompt_path, 'r', encoding='utf-8') as f:
+                            prompt_content = f.read()
+                        
+                        with open(prompt_file_path, 'w', encoding='utf-8') as f:
+                            f.write(prompt_content)
+                        
+                        # Extract description for display
+                        prompt_description = extract_description_from_frontmatter(prompt_content)
+                        created_prompts.append(f"  • **/{prompt_name}**: {prompt_description}")
+                
+                if created_prompts:
+                    result_text += f"\n🎯 **Custom Prompts Included** (following VS Code standard):\n" + "\n".join(created_prompts)
+                    result_text += f"\n📁 **Prompts Location**: {prompts_dir}\n"
+            
+            result_text += f"\n\n**🚀 Ready to Use!**\n"
+            result_text += f"1. **Enable Prompt Files**: Set `chat.promptFiles: true` in VS Code settings\n"
+            result_text += f"2. **Open VS Code** in your workspace\n"
+            result_text += f"3. **Configure Chat Modes**: Ctrl+Shift+P → 'Chat: Configure Chat Modes'\n"
+            result_text += f"4. **Select the Mode**: Choose '{mode_type.replace('_', ' ').title()}' from the chat dropdown\n"
+            
+            if created_prompts:
+                result_text += f"5. **Use Custom Prompts**: Type `/{prompt_name}` in chat (VS Code will find them in `.github/prompts/`)\n"
+            
+            result_text += f"\n💡 **File Structure** (following VS Code documentation):\n"
+            result_text += f"   📁 `.github/chatmodes/` - Chat mode files\n"
+            result_text += f"   📁 `.github/prompts/` - Prompt files (VS Code standard)\n"
+            result_text += f"\n📖 **Description**: {description}"
+            
             return [types.TextContent(
                 type="text",
-                text=f"✅ Successfully created chat mode file: {file_path}\n\n"
-                     f"📋 **Mode Type**: {mode_type.replace('_', ' ').title()}\n"
-                     f"📁 **Location**: {file_path}\n"
-                     f"📖 **Source**: {os.path.join(MODES_DIR, filename)}\n\n"
-                     f"**Next Steps:**\n"
-                     f"1. Open VS Code in your workspace\n"
-                     f"2. Use Ctrl+Shift+P (Cmd+Shift+P on Mac) to open Command Palette\n"
-                     f"3. Run 'Chat: Configure Chat Modes' to verify the mode is detected\n"
-                     f"4. Select the new mode from the chat mode dropdown in the Chat view\n\n"
-                     f"🎯 **Mode Description**: {description}"
+                text=result_text
             )]
             
         except Exception as e:
             return [types.TextContent(
                 type="text",
-                text=f"❌ Error creating chat mode file: {str(e)}"
+                text=f"❌ Error creating chat mode package: {str(e)}"
             )]
     
     return [types.TextContent(
@@ -290,7 +398,7 @@ async def main():
             write_stream,
             InitializationOptions(
                 server_name="chat-mode-creator",
-                server_version="1.0.0",
+                server_version="3.0.0",
                 capabilities=types.ServerCapabilities(
                     tools=types.ToolsCapability(
                         listChanged=False
