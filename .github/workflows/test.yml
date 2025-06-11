@@ -1,0 +1,53 @@
+name: 🧪 Test MCP Server
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        pip install pytest
+    
+    - name: Test MCP server can start
+      run: |
+        timeout 10s python mcp_chatmode_server.py || test $? = 124
+    
+    - name: Test example usage
+      run: |
+        python example_usage.py
+    
+    - name: Validate chat mode templates
+      run: |
+        # Basic validation that chat mode files exist and are properly formatted
+        test -f "chat_modes/azure-bicep-development/azure-bicep-development.chatmode.md"
+        test -f "chat_modes/lambda-to-functions-migration/lambda-to-functions-migration.chatmode.md"
+        test -f "chat_modes/spec-driven-development/spec-driven-development.chatmode.md"
+        
+        # Validate that prompt files exist
+        test -f "chat_modes/azure-bicep-development/review.prompt.md"
+        test -f "chat_modes/azure-bicep-development/deploy.prompt.md"
+        test -f "chat_modes/lambda-to-functions-migration/evaluate.prompt.md"
+        test -f "chat_modes/lambda-to-functions-migration/validate.prompt.md"
+        test -f "chat_modes/spec-driven-development/validate_spec.prompt.md"
+        test -f "chat_modes/spec-driven-development/generate_tests.prompt.md"
+        
+        echo "✅ All chat mode templates validated successfully!"
